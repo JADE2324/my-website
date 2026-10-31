@@ -1,7 +1,45 @@
-const $=id=>document.getElementById(id);let jobs=[],current=-1;const corrections=[['细致的视频解西','细致的视频解析'],['一遍遍大漠','一遍遍打磨'],['背后的头入','背后的投入'],['名校毕的老师','名校毕业的老师'],['AI的精准测功能','AI精准学功能']];const reviewHints=['贵来','张','出名','初高中六年一贯制'];function parseSrt(t){let bs=t.replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n').trim().split(/\n\s*\n/);return bs.map((b,i)=>{let l=b.split('\n'),k=l.findIndex(x=>x.includes('-->'));if(k<0)throw Error('第'+(i+1)+'段缺少时间码');return {id:i+1,time:l[k],text:l.slice(k+1).join('\n').trim()}})}function getGlossary(){return $('glossary').value.split(/[,，\n]/).map(x=>x.trim()).filter(Boolean).sort((a,b)=>b.length-a.length)}function normalizeText(t){let n=t;for(let [a,b]of corrections)n=n.replaceAll(a,b);return n}function repair(job){let changed=[];job.cues.forEach(c=>{let before=c.text,after=normalizeText(before);let words=getGlossary();for(let w of words){if(after.includes(w))continue;let compact=after.replace(/[\s，。！？、：；]/g,'');if(w.length>=4&&compact.includes(w)){} }if(before!==after){changed.push({id:c.id,before,after});c.text=after}});job.changes=changed;job.fixed=true;job.review=job.cues.filter(c=>reviewHints.some(x=>c.text.includes(x))).map(c=>({id:c.id,text:c.text,reason:'需人工确认词义或主播口播'}));job.repaired=true;render();}function toSrt(j){return j.cues.map(c=>`${c.id}\n${c.time}\n${c.text}`).join('\n\n')+'\n'}function render(){let box=$('tasks');box.innerHTML=jobs.map((j,i)=>`<div class="task ${i===current?'active':''}" onclick="selectJob(${i})"><b>${esc(j.name)}</b><br><span class="badge">${j.cues.length}条字幕</span> ${j.repaired?'<span class="badge">已修正</span>':'<span class="muted">待分析</span>'} ${j.review?.length?`<span class="warn">${j.review.length}条待复核</span>`:''}</div>`).join('')||'<div class="empty">上传后显示任务列表</div>';let j=jobs[current];if(!j){$('diff').innerHTML='<div class="empty">选择任务并点击自动修正</div>';return}let changes=j.changes||[];let show=$('showFull')?.checked!==false;let full=j.cues.map(c=>`${c.id}\n${c.time}\n${c.text}`).join('\n\n');$('manual').value=full;$('diff').innerHTML=(show?'<div><b>完整字幕</b><pre class="srtline">'+esc(full)+'</pre></div><hr>':'')+(changes.length?'<b>自动修正差异</b>'+changes.map(x=>`<div><b>第${x.id}条</b> <span class="before">${esc(x.before)}</span> → <span class="after">${esc(x.after)}</span></div>`).join(''):'<div class="ok">没有自动修正内容</div>')+(j.review?.length?'<hr>'+j.review.map(x=>`<div class="warn">第${x.id}条待复核：${esc(x.text)}</div>`).join(''):'');}function selectJob(i){current=i;render()}$('files').onchange=async e=>{for(let f of e.target.files){try{jobs.push({name:f.name,cues:parseSrt(await f.text()),repaired:false})}catch(err){alert(f.name+'：'+err.message)}}if(current<0)current=0;$('summary').textContent=`已载入 ${jobs.length} 个文件`;render()};async function analyzeAll(){if(!jobs.length){alert('请先上传SRT');return}let j=jobs[current];$('summary').className='muted';$('summary').textContent='按钮已触发，正在连接火山方舟…';try{let ctl=new AbortController();let timer=setTimeout(()=>ctl.abort(),20000);let r=await fetch('https://proud-frog-10ea.2321881307.workers.dev/api/proof', ...),{method:'POST',headers:{'Content-Type':'application/json'},signal:ctl.signal,body:JSON.stringify({srt:j.cues.map(c=>c.id+'\n'+c.time+'\n'+c.text).join('\n\n'),script:$('standardScript')?.value||'',glossary:$('glossary')?.value||''})});clearTimeout(timer);let d=await r.json();if(!r.ok||d.error)throw Error(d.error?.message||d.error||'后台接口错误');j.aiResult=d.result;j.fixed=true;$('summary').textContent='AI校对完成，请查看返回结果并人工确认';$('diff').innerHTML='<pre class=\"srtline\">'+esc(d.result)+'</pre>'}catch(e){try{repair(j);$('summary').textContent='AI接口未连接，已使用本地规则完成基础修正：'+e.message;$('summary').className='err'}catch(localErr){$('summary').textContent='校对失败：'+localErr.message;$('summary').className='err'}alert('AI接口未连接：'+e.message)}}
-function loadDemo(){let t='1\n00:00:00,000 --> 00:00:02,000\n这台清北道远高中学习机\n\n2\n00:00:02,000 --> 00:00:04,000\n每道题都有细致的视频解西';jobs.push({name:'演示样本.srt',cues:parseSrt(t),repaired:false});current=jobs.length-1;$('summary').textContent='已加载演示样本';render()}function saveGlossary(){localStorage.setItem('glossary',$('glossary').value);alert('名称词库已保存在本机')}
-function saveProductContent(){localStorage.setItem('glossary',$('glossary').value);localStorage.setItem('intro',$('intro').value);alert('产品相关内容已保存')}function download(text,name){let a=document.createElement('a'),u=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}function downloadCurrent(){let j=jobs[current];if(!j?.repaired)return alert('请先自动修正');download(toSrt(j),j.name.replace(/\.srt$/i,'')+'-修正后.srt')}function downloadAll(){let ready=jobs.filter(j=>j.repaired);if(!ready.length)return alert('请先自动修正');ready.forEach(j=>download(toSrt(j),j.name.replace(/\.srt$/i,'')+'-修正后.srt'))}function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}let saved=localStorage.getItem('glossary');if(saved)$('glossary').value=saved;let introOld=localStorage.getItem('intro');if(introOld)$('intro').value=introOld;
+document.addEventListener('DOMContentLoaded', () => {
+    // 绑定按钮点击事件
+    const btn = document.getElementById('autoFixBtn') || document.querySelector('button[onclick*="analyzeAll"]');
+    if (btn) {
+        btn.removeAttribute('onclick'); // 移除旧的报错绑定
+        btn.addEventListener('click', analyzeAll);
+    }
+});
 
-function applyManual(){let j=jobs[current];if(!j)return alert('请先选择任务');let t=$('manual').value;try{j.cues=parseSrt(t);j.manual=true;render();$('summary').textContent='已应用人工修改，可下载当前SRT'}catch(e){alert('格式错误：'+e.message)}}
-function saveIntro(){localStorage.setItem('intro',$('intro').value);alert('产品介绍已保存在本机')}
-let introSaved=localStorage.getItem('intro');if(introSaved)$('intro').value=introSaved;
+async function analyzeAll() {
+    const msgBox = document.getElementById('msg') || document.body.appendChild(document.createElement('div'));
+    msgBox.innerText = "正在连接火山方舟，请耐心等待...";
+    
+    // 找到页面上上传的字幕内容或手动输入的框
+    let srtText = "";
+    const manualInput = document.getElementById('manual');
+    const fileInput = document.getElementById('files');
+    
+    if (manualInput && manualInput.value) {
+        srtText = manualInput.value;
+    } else {
+        msgBox.innerText = "请先在页面上传 SRT 文件或粘贴字幕！";
+        return;
+    }
+
+    try {
+        const response = await fetch('https://proud-frog-10ea.2321881307.workers.dev/api/proof', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ srt: srtText })
+        });
+
+        const data = await response.json();
+        
+        if (!response.ok) throw new Error(data.error || "服务器报错");
+        
+        msgBox.innerText = "✅ AI 校对完成！结果已返回。";
+        // 如果有显示结果的地方，就把结果填进去
+        const diffBox = document.getElementById('diff');
+        if (diffBox) diffBox.innerText = data.result;
+        
+    } catch (error) {
+        msgBox.innerText = "❌ 失败：" + error.message;
+    }
+}
